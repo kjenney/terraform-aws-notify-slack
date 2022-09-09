@@ -25,6 +25,9 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 # Create client so its cached/frozen between invocations
 KMS_CLIENT = boto3.client("kms", region_name=REGION)
 
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
 
 class AwsService(Enum):
     """AWS service supported by function"""
@@ -191,80 +194,6 @@ def format_guardduty_finding(message: Dict[str, Any], region: str) -> Dict[str, 
     }
 
 
-class AwsHealthCategory(Enum):
-    """Maps AWS Health eventTypeCategory to Slack message format color
-
-    eventTypeCategory
-        The category code of the event. The possible values are issue,
-        accountNotification, and scheduledChange.
-    """
-
-    accountNotification = "#777777"
-    scheduledChange = "warning"
-    issue = "danger"
-
-
-def format_aws_health(message: Dict[str, Any], region: str) -> Dict[str, Any]:
-    """
-    Format AWS Health event into Slack message format
-
-    :params message: SNS message body containing AWS Health event
-    :params region: AWS region where the event originated from
-    :returns: formatted Slack message payload
-    """
-
-    aws_health_url = (
-        f"https://phd.aws.amazon.com/phd/home?region={region}#/dashboard/open-issues"
-    )
-    detail = message["detail"]
-    resources = message.get("resources", "<unknown>")
-    service = detail.get("service", "<unknown>")
-
-    return {
-        "color": AwsHealthCategory[detail["eventTypeCategory"]].value,
-        "text": f"New AWS Health Event for {service}",
-        "fallback": f"New AWS Health Event for {service}",
-        "fields": [
-            {"title": "Affected Service", "value": f"`{service}`", "short": True},
-            {
-                "title": "Affected Region",
-                "value": f"`{message.get('region')}`",
-                "short": True,
-            },
-            {
-                "title": "Code",
-                "value": f"`{detail.get('eventTypeCode')}`",
-                "short": False,
-            },
-            {
-                "title": "Event Description",
-                "value": f"`{detail['eventDescription'][0]['latestDescription']}`",
-                "short": False,
-            },
-            {
-                "title": "Affected Resources",
-                "value": f"`{', '.join(resources)}`",
-                "short": False,
-            },
-            {
-                "title": "Start Time",
-                "value": f"`{detail.get('startTime', '<unknown>')}`",
-                "short": True,
-            },
-            {
-                "title": "End Time",
-                "value": f"`{detail.get('endTime', '<unknown>')}`",
-                "short": True,
-            },
-            {
-                "title": "Link to Event",
-                "value": f"{aws_health_url}",
-                "short": False,
-            },
-        ],
-    }
-
-
 def format_default(
     message: Union[str, Dict], subject: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -339,10 +268,6 @@ def get_slack_message_payload(
         )
         attachment = notification
 
-    elif isinstance(message, Dict) and message.get("detail-type") == "AWS Health Event":
-        notification = format_aws_health(message=message, region=message["region"])
-        attachment = notification
-
     elif "attachments" in message or "text" in message:
         payload = {**payload, **message}
 
@@ -367,6 +292,41 @@ def send_slack_notification(payload: Dict[str, Any]) -> str:
     if not slack_url.startswith("http"):
         slack_url = decrypt_url(slack_url)
 
+    payload = {
+        "text": "Danny Torrence left a 1 star review for your property.",
+        "blocks": [
+        	{
+        		"type": "section",
+        		"text": {
+        			"type": "mrkdwn",
+        			"text": "Danny Torrence left the following review for your property:"
+        		}
+        	},
+        	{
+        		"type": "section",
+        		"block_id": "section567",
+        		"text": {
+        			"type": "mrkdwn",
+        			"text": "<https://example.com|Overlook Hotel> \n :star: \n Doors had too many axe holes, guest in room 237 was far too rowdy, whole place felt stuck in the 1920s."
+        		},
+        		"accessory": {
+        			"type": "image",
+        			"image_url": "https://is5-ssl.mzstatic.com/image/thumb/Purple3/v4/d3/72/5c/d3725c8f-c642-5d69-1904-aa36e4297885/source/256x256bb.jpg",
+        			"alt_text": "Haunted hotel image"
+        		}
+        	},
+        	{
+        		"type": "section",
+        		"block_id": "section789",
+        		"fields": [
+        			{
+        				"type": "mrkdwn",
+        				"text": "*Average Rating*\n1.0"
+        			}
+        		]
+        	}
+        ]
+    }
     data = urllib.parse.urlencode({"payload": json.dumps(payload)}).encode("utf-8")
     req = urllib.request.Request(slack_url)
 
@@ -387,6 +347,7 @@ def lambda_handler(event: Dict[str, Any], context: Dict[str, Any]) -> str:
     :param context: lambda expected context object
     :returns: none
     """
+    
     if os.environ.get("LOG_EVENTS", "False") == "True":
         logging.info(f"Event logging enabled: `{json.dumps(event)}`")
 
@@ -399,6 +360,9 @@ def lambda_handler(event: Dict[str, Any], context: Dict[str, Any]) -> str:
         payload = get_slack_message_payload(
             message=message, region=region, subject=subject
         )
+        
+        logging.info(f"Payload: {payload}")
+        
         response = send_slack_notification(payload=payload)
 
     if json.loads(response)["code"] != 200:
@@ -406,5 +370,5 @@ def lambda_handler(event: Dict[str, Any], context: Dict[str, Any]) -> str:
         logging.error(
             f"Error: received status `{response_info}` using event `{event}` and context `{context}`"
         )
-
+    
     return response
